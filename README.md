@@ -20,6 +20,13 @@ A kotlin back-end w/ an in-memory DB and a FreeMarker front-end.
 
 Call w/ postman (or other app) the end-point 
 
+```
+{
+	"emoji": "🚿",
+	"phrase": "Take a shower!"
+}
+```
+
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
