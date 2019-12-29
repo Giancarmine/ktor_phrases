@@ -8,6 +8,6 @@ const val ABOUT = "/about"
 
 fun Route.about() {
     get(ABOUT) {
-        call.respondText("About page.")
+        call.respondText("About - Another API test by @El_Giancar.")
     }
 }

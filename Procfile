@@ -1,0 +1,1 @@
+web: build/install/ktor_phrases/bin/ktor_phrases

@@ -7,7 +7,7 @@ import io.ktor.routing.*
 const val HOME = "/"
 
 fun Route.home() {
-    get (HOME) {
+    get(HOME) {
         call.respondText("Hello, Ktor!")
     }
 }
