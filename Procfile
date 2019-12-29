@@ -1,1 +1,1 @@
-web: build/install/ktor_phrases/bin/ktor_phrases
+web: java -jar target/ktor_phrases.jar
