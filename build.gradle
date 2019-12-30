@@ -18,11 +18,15 @@ version '0.0.1'
 mainClassName = "io.ktor.server.netty.EngineMain"
 
 
-// This task will generate your fat JAR and put it in the ./build/libs/ directory
+// This task will generate your fat JAR
+// Output to build/libs/ktor_phrases.jar
 shadowJar {
     manifest {
         attributes 'Main-Class': mainClassName
     }
+    baseName = 'ktor_phrases'
+    version = ''
+    classifier = ''
 }
 
 task stage {
