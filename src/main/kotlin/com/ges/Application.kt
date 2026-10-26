@@ -11,6 +11,7 @@ import com.ges.webapp.home
 import com.ges.webapp.phrases
 import freemarker.cache.ClassTemplateLoader
 import io.ktor.http.HttpStatusCode
+import io.ktor.serialization.ContentConvertException
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -58,10 +59,17 @@ fun Application.module(repository: Repository = InMemoryRepository()) {
             )
         }
         exception<BadRequestException> { call, cause ->
-            call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse("bad_request", cause.message ?: "Malformed request"),
-            )
+            if (cause.isContentTransformationFailure()) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("invalid_body", "Request body is not valid JSON for this endpoint"),
+                )
+            } else {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("bad_request", cause.message ?: "Malformed request"),
+                )
+            }
         }
         exception<Throwable> { call, cause ->
             call.application.log.error("Unhandled exception while serving ${call.request.uri}", cause)
@@ -89,3 +97,12 @@ fun Application.module(repository: Repository = InMemoryRepository()) {
 }
 
 const val API_VERSION = "/api/v1"
+
+/**
+ * Ktor wraps serialization failures in a [BadRequestException]; treat those as body errors
+ * rather than generic malformed requests.
+ */
+private fun Throwable.isContentTransformationFailure(): Boolean =
+    generateSequence(this) { it.cause }.any {
+        it is ContentTransformationException || it is ContentConvertException
+    }

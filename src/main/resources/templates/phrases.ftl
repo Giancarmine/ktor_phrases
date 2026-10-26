@@ -13,7 +13,7 @@
     <ul>
         <#list phrases as phrase>
             <li>
-                <span>${phrase.emoji}</span>
+                <span>${phrase.emoji?html}</span>
                 ${phrase.phrase?html}
                 <small>#${phrase.id}</small>
             </li>
