@@ -1,6 +1,7 @@
 # ktor_phrases
 
 [![CI](https://github.com/Giancarmine/ktor_phrases/actions/workflows/ci.yml/badge.svg)](https://github.com/Giancarmine/ktor_phrases/actions/workflows/ci.yml)
+[![Docker](https://github.com/Giancarmine/ktor_phrases/actions/workflows/docker.yml/badge.svg)](https://github.com/Giancarmine/ktor_phrases/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A small emoji/phrase association API built with [Ktor](https://ktor.io/). You POST an emoji
@@ -35,9 +36,11 @@ and a Docker image.
 - JSON error envelope with stable error codes.
 - Optional durable SQLite storage; in-memory remains the default.
 - Swagger UI at `/docs` and the raw spec at `/docs/openapi.yaml`.
+- Liveness (`/health`) and storage-aware readiness (`/ready`) probes.
 - Server-rendered HTML view with HTML-escaped values.
 - Environment-driven configuration with startup validation.
 - Multi-stage Dockerfile that runs the tests during the image build.
+- Docker images published to GHCR from CI on `main` and version tags.
 
 ## Status and breaking changes
 
@@ -76,6 +79,8 @@ Application.configure(repository, config)
          ├── GET  /                     plain-text endpoint index
          ├── GET  /about                project info
          ├── GET  /phrases              HTML list (FreeMarker)
+         ├── GET  /health               liveness probe
+         ├── GET  /ready                readiness probe (repository check)
          ├── GET  /docs                 Swagger UI
          ├── GET  /docs/openapi.yaml    OpenAPI document
          └── /api/v1/phrases            JSON API
@@ -98,6 +103,7 @@ src/main/kotlin/com/ges/
 ├── config/AppConfig.kt            typed settings and startup validation
 ├── model/
 │   ├── EmojiPhrase.kt             stored entity (id, emoji, phrase)
+│   ├── HealthResponse.kt          probe response
 │   ├── PhraseRequest.kt           POST payload
 │   └── Errors.kt                  ErrorResponse + domain exceptions
 ├── repository/
@@ -107,6 +113,7 @@ src/main/kotlin/com/ges/
 └── webapp/
     ├── Home.kt                    GET /
     ├── About.kt                   GET /about
+    ├── Health.kt                  GET /health and GET /ready
     └── Phrases.kt                 GET /phrases (FreeMarker)
 src/main/resources/
 ├── application.conf               defaults + environment overrides
@@ -116,10 +123,14 @@ src/main/resources/
 src/test/kotlin/com/ges/
 ├── ApiTest.kt                     JSON API and pagination tests
 ├── WebappTest.kt                  HTML, home, and Swagger tests
+├── HealthTest.kt                  liveness/readiness tests
 ├── RepositoryFactoryTest.kt       storage selection tests
 ├── TestSupport.kt                 shared testApplication helpers
 ├── config/AppConfigTest.kt        configuration parsing/validation tests
 └── repository/                    in-memory and SQLite repository tests
+.github/workflows/
+├── ci.yml                         build, tests and coverage
+└── docker.yml                     Docker build and GHCR publication
 Dockerfile                         multi-stage build and runtime image
 ```
 
@@ -130,6 +141,8 @@ Dockerfile                         multi-stage build and runtime image
 | `GET` | `/` | `200` | Plain-text list of endpoints |
 | `GET` | `/about` | `200` | Project and source link |
 | `GET` | `/phrases` | `200` | HTML page rendered with FreeMarker |
+| `GET` | `/health` | `200` | Liveness probe |
+| `GET` | `/ready` | `200` / `503` | Readiness probe; checks the configured repository |
 | `GET` | `/docs` | `200` | Swagger UI |
 | `GET` | `/docs/openapi.yaml` | `200` | OpenAPI 3.0.3 specification |
 | `GET` | `/api/v1/phrases` | `200` | Paginated JSON array; supports `limit` and `offset` |
@@ -180,6 +193,17 @@ Link: </api/v1/phrases?limit=2&offset=6>; rel="next", </api/v1/phrases?limit=2&o
 `Link` is only present when a next and/or previous page exists. Invalid pagination parameters
 return `400` with `validation_error`.
 
+### Health checks
+
+| Endpoint | Meaning | Responses |
+|---|---|---|
+| `GET /health` | Liveness: the process is running | `200 {"status":"ok"}` |
+| `GET /ready` | Readiness: the configured storage answers a query | `200 {"status":"ready"}` or `503 {"status":"unavailable"}` |
+
+`/ready` catches storage failures, logs the cause, and does not expose error details in the
+response. The in-memory backend is ready as long as the process is alive; SQLite is checked
+with a real query.
+
 ### Examples
 
 ```bash
@@ -206,6 +230,10 @@ curl http://localhost:8080/phrases
 # OpenAPI / Swagger UI
 curl http://localhost:8080/docs/openapi.yaml
 open http://localhost:8080/docs
+
+# Probes
+curl http://localhost:8080/health
+curl -i http://localhost:8080/ready
 ```
 
 Swagger UI loads its static assets from `https://unpkg.com/swagger-ui-dist`, so viewing
@@ -296,7 +324,23 @@ java -jar build/libs/ktor-phrases-all.jar
 The included multi-stage `Dockerfile` builds the fat JAR (running the tests first) and starts
 it as a non-root user.
 
+CI publishes the image to GitHub Container Registry from
+[`.github/workflows/docker.yml`](.github/workflows/docker.yml):
+
+- `latest` and `main` on pushes to `main`
+- the tag name on `v*` tags (for example, `v0.2.0`)
+- `sha-<commit>` for every published build
+- pull requests build the image without pushing it
+
+Published images are private by default. Change the package visibility in the repository's
+package settings if you want anonymous pulls.
+
 ```bash
+# Published image
+docker pull ghcr.io/giancarmine/ktor_phrases:latest
+docker run --rm -p 8080:8080 ghcr.io/giancarmine/ktor_phrases:latest
+
+# Build locally
 docker build -t ktor-phrases .
 
 # In-memory storage
@@ -319,12 +363,13 @@ parent directory are writable by the unprivileged `app` user (uid `10001`).
 ./gradlew test
 ```
 
-The suite has 51 tests covering creation, duplicate handling, pagination, fetching, deletion,
-validation, malformed JSON, HTML escaping, Swagger/OpenAPI, configuration parsing, repository
-selection, and both repository implementations (including SQLite persistence across reconnects).
-JaCoCo reports are written to `build/reports/jacoco/test/html`; `./gradlew build` enforces an
-80% line-coverage minimum (currently about 96% lines / 89% branches). CI runs `./gradlew build`
-on every push and pull request.
+The suite has 54 tests covering creation, duplicate handling, pagination, fetching, deletion,
+validation, malformed JSON, HTML escaping, Swagger/OpenAPI, health probes, configuration parsing,
+repository selection, and both repository implementations (including SQLite persistence across
+reconnects). JaCoCo reports are written to `build/reports/jacoco/test/html`; `./gradlew build`
+enforces an 80% line-coverage minimum (currently about 96% lines / 89% branches). CI runs
+`./gradlew build` on every push and pull request; the Docker workflow builds the image on pull
+requests and publishes it from `main` and version tags.
 
 ## Design notes and next steps
 
@@ -333,9 +378,9 @@ on every push and pull request.
 - Pagination was kept header-based to preserve the existing array response shape. A future v2
   could return an envelope (`items`, `total`, `limit`, `offset`) if a breaking change is
   acceptable.
-- Natural next steps: authentication/API keys, rate limiting, a health/readiness endpoint,
-  a connection pool plus schema migrations for heavier SQLite use, generated (rather than
-  hand-written) OpenAPI, and publishing the Docker image from CI.
+- Natural next steps: authentication/API keys, rate limiting, a connection pool plus schema
+  migrations for heavier SQLite use, generated (rather than hand-written) OpenAPI, image
+  signing/SBOMs, and wiring the probes into a deployment manifest.
 - There is no authentication or rate limiting. Run it as a demo, not as a production service.
 
 ## Credits

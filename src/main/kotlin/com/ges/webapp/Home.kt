@@ -21,6 +21,8 @@ fun Route.home() {
             GET    /phrases
             GET    /docs
             GET    /about
+            GET    /health
+            GET    /ready
             """.trimIndent(),
             ContentType.Text.Plain,
         )

@@ -12,9 +12,49 @@ info:
 servers:
   - url: http://localhost:8080
 tags:
+  - name: health
+    description: Liveness and readiness probes.
   - name: phrases
     description: Create, list, fetch and delete emoji/phrase pairs.
 paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      description: Returns `200` while the process is running.
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+  /ready:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      description: |
+        Checks that the configured repository can answer a query. Returns `503`
+        when storage is unavailable; error details are logged, not returned.
+      responses:
+        '200':
+          description: The repository is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ready
+        '503':
+          description: The repository is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: unavailable
   /api/v1/phrases:
     get:
       tags: [phrases]
@@ -198,6 +238,14 @@ components:
           type: string
           nullable: true
           example: "emoji must not be blank"
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready, unavailable]
+          example: ok
   responses:
     BadRequest:
       description: The request is malformed or failed validation.

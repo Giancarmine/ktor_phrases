@@ -10,6 +10,7 @@ import com.ges.repository.InMemoryRepository
 import com.ges.repository.Repository
 import com.ges.repository.SqliteRepository
 import com.ges.webapp.about
+import com.ges.webapp.health
 import com.ges.webapp.home
 import com.ges.webapp.phrases
 import freemarker.cache.ClassTemplateLoader
@@ -108,6 +109,7 @@ fun Application.configure(
     routing {
         home()
         about()
+        health(repository)
         phrases(repository)
         phraseRoutes(repository, config)
         swaggerUI("/docs", "openapi.yaml")
