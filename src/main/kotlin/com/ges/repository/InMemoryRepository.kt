@@ -23,7 +23,11 @@ class InMemoryRepository : Repository {
 
     override suspend fun phrase(id: Int): EmojiPhrase? = mutex.withLock { phrases[id] }
 
-    override suspend fun phrases(): List<EmojiPhrase> = mutex.withLock { phrases.values.toList() }
+    override suspend fun phrases(offset: Int, limit: Int): List<EmojiPhrase> = mutex.withLock {
+        phrases.values.asSequence().drop(offset).take(limit).toList()
+    }
+
+    override suspend fun count(): Int = mutex.withLock { phrases.size }
 
     override suspend fun remove(id: Int): Boolean = mutex.withLock { phrases.remove(id) != null }
 

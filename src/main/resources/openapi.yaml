@@ -1,0 +1,219 @@
+openapi: 3.0.3
+info:
+  title: ktor_phrases
+  version: 0.2.0
+  description: |
+    A small REST API that stores emoji/phrase pairs.
+
+    The list endpoint is paginated. The response body stays a JSON array for
+    backwards compatibility; page metadata is exposed in response headers.
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: phrases
+    description: Create, list, fetch and delete emoji/phrase pairs.
+paths:
+  /api/v1/phrases:
+    get:
+      tags: [phrases]
+      summary: List phrases
+      description: |
+        Returns phrases ordered by id. Use `limit` and `offset` to page through
+        the collection. `Link` contains `next`/`prev` URLs when applicable.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: A page of phrases.
+          headers:
+            X-Total-Count:
+              description: Total number of stored phrases.
+              schema:
+                type: integer
+                example: 42
+            X-Offset:
+              description: Offset used for this response.
+              schema:
+                type: integer
+                example: 0
+            X-Limit:
+              description: Maximum number of items in this response.
+              schema:
+                type: integer
+                example: 20
+            Link:
+              description: RFC 5988 links to the next and/or previous page.
+              schema:
+                type: string
+                example: '</api/v1/phrases?limit=20&offset=20>; rel="next"'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EmojiPhrase'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [phrases]
+      summary: Create a phrase
+      description: |
+        Stores a new pair. Surrounding whitespace is trimmed. If the same
+        emoji/phrase pair already exists, the existing item is returned with
+        status `200` instead of `201`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhraseRequest'
+            example:
+              emoji: "☕"
+              phrase: "Coffee break"
+      responses:
+        '201':
+          description: The phrase was created.
+          headers:
+            Location:
+              description: URL of the new phrase.
+              schema:
+                type: string
+                example: /api/v1/phrases/1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmojiPhrase'
+        '200':
+          description: An identical pair already existed; the existing phrase is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmojiPhrase'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/phrases/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PhraseId'
+    get:
+      tags: [phrases]
+      summary: Get a phrase
+      responses:
+        '200':
+          description: The requested phrase.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmojiPhrase'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [phrases]
+      summary: Delete a phrase
+      responses:
+        '204':
+          description: The phrase was deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of phrases to return. Bounded by MAX_PAGE_SIZE (default 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Number of phrases to skip.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    PhraseId:
+      name: id
+      in: path
+      required: true
+      description: Positive phrase identifier.
+      schema:
+        type: integer
+        minimum: 1
+  schemas:
+    EmojiPhrase:
+      type: object
+      required: [id, emoji, phrase]
+      properties:
+        id:
+          type: integer
+          example: 1
+        emoji:
+          type: string
+          example: "☕"
+        phrase:
+          type: string
+          example: "Coffee break"
+    PhraseRequest:
+      type: object
+      required: [emoji, phrase]
+      properties:
+        emoji:
+          type: string
+          minLength: 1
+          maxLength: 32
+          example: "☕"
+        phrase:
+          type: string
+          minLength: 1
+          maxLength: 280
+          example: "Coffee break"
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: validation_error
+          enum: [validation_error, invalid_body, bad_request, not_found, internal_error]
+        message:
+          type: string
+          nullable: true
+          example: "emoji must not be blank"
+  responses:
+    BadRequest:
+      description: The request is malformed or failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: The requested phrase does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: An unexpected server error occurred.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

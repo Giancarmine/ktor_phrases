@@ -23,6 +23,25 @@ class WebappTest {
         val body = response.bodyAsText()
         assertContains(body, "POST   /api/v1/phrases")
         assertContains(body, "DELETE /api/v1/phrases/{id}")
+        assertContains(body, "GET    /docs")
+    }
+
+    @Test
+    fun `swagger ui is served`() = appTest {
+        val response = client.get("/docs")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), "Swagger")
+    }
+
+    @Test
+    fun `openapi document is served`() = appTest {
+        val response = client.get("/docs/openapi.yaml")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertContains(body, "openapi: 3.0.3")
+        assertContains(body, "/api/v1/phrases")
     }
 
     @Test

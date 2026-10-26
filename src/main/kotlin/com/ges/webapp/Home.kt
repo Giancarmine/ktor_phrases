@@ -14,11 +14,12 @@ fun Route.home() {
             """
             ktor_phrases - emoji/phrase API
 
-            GET    /api/v1/phrases
+            GET    /api/v1/phrases?limit=20&offset=0
             POST   /api/v1/phrases
             GET    /api/v1/phrases/{id}
             DELETE /api/v1/phrases/{id}
             GET    /phrases
+            GET    /docs
             GET    /about
             """.trimIndent(),
             ContentType.Text.Plain,

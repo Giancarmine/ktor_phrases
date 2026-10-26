@@ -1,5 +1,6 @@
 package com.ges
 
+import com.ges.config.AppConfig
 import com.ges.repository.InMemoryRepository
 import com.ges.repository.Repository
 import io.ktor.client.HttpClient
@@ -15,9 +16,10 @@ import kotlinx.serialization.json.Json
 
 internal fun appTest(
     repository: Repository = InMemoryRepository(),
+    config: AppConfig = AppConfig(),
     block: suspend ApplicationTestBuilder.() -> Unit,
 ) = testApplication {
-    application { module(repository) }
+    application { configure(repository, config) }
     block()
 }
 

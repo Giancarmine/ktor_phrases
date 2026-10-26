@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
 build/
+data/
 out/
 .idea/
 *.iml

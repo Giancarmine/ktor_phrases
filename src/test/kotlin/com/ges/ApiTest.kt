@@ -1,5 +1,6 @@
 package com.ges
 
+import com.ges.config.AppConfig
 import com.ges.model.EmojiPhrase
 import com.ges.model.ErrorResponse
 import com.ges.repository.InMemoryRepository
@@ -89,6 +90,75 @@ class ApiTest {
 
         assertEquals(listOf(1, 2, 3), all.map { it.id })
         assertEquals(listOf("☕", "🌙", "🚿"), all.map { it.emoji })
+    }
+
+    @Test
+    fun `list uses the configured default page size`() {
+        val repository = InMemoryRepository()
+        appTest(repository, AppConfig(pageSize = 2, maxPageSize = 5)) {
+            repeat(3) { index -> repository.add("e$index", "p$index") }
+
+            val response = jsonClient().get("/api/v1/phrases")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(listOf(1, 2), response.body<List<EmojiPhrase>>().map { it.id })
+            assertEquals("3", response.headers["X-Total-Count"])
+            assertEquals("0", response.headers["X-Offset"])
+            assertEquals("2", response.headers["X-Limit"])
+
+            val link = response.headers[HttpHeaders.Link].orEmpty()
+            assertContains(link, "offset=2>; rel=\"next\"")
+            assertFalse(link.contains("rel=\"prev\""))
+        }
+    }
+
+    @Test
+    fun `list applies limit and offset and returns pagination headers`() {
+        val repository = InMemoryRepository()
+        appTest(repository, AppConfig(pageSize = 2, maxPageSize = 5)) {
+            repeat(5) { index -> repository.add("e$index", "p$index") }
+
+            val response = jsonClient().get("/api/v1/phrases?limit=2&offset=1")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(listOf(2, 3), response.body<List<EmojiPhrase>>().map { it.id })
+            assertEquals("5", response.headers["X-Total-Count"])
+            assertEquals("1", response.headers["X-Offset"])
+            assertEquals("2", response.headers["X-Limit"])
+
+            val link = response.headers[HttpHeaders.Link].orEmpty()
+            assertContains(link, "offset=3>; rel=\"next\"")
+            assertContains(link, "offset=0>; rel=\"prev\"")
+        }
+    }
+
+    @Test
+    fun `offset past the end returns an empty page`() {
+        val repository = InMemoryRepository()
+        appTest(repository) {
+            repeat(3) { index -> repository.add("e$index", "p$index") }
+
+            val response = jsonClient().get("/api/v1/phrases?offset=10")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertTrue(response.body<List<EmojiPhrase>>().isEmpty())
+            assertEquals("3", response.headers["X-Total-Count"])
+            assertEquals("10", response.headers["X-Offset"])
+        }
+    }
+
+    @Test
+    fun `invalid pagination parameters return 400`() {
+        appTest(config = AppConfig(pageSize = 2, maxPageSize = 5)) {
+            val client = jsonClient()
+
+            listOf("limit=0", "limit=6", "limit=abc", "offset=-1", "offset=abc").forEach { query ->
+                val response = client.get("/api/v1/phrases?$query")
+
+                assertEquals(HttpStatusCode.BadRequest, response.status, query)
+                assertEquals("validation_error", response.body<ErrorResponse>().error, query)
+            }
+        }
     }
 
     @Test
@@ -204,6 +274,19 @@ class ApiTest {
     }
 
     @Test
+    fun `field limits come from configuration`() =
+        appTest(config = AppConfig(maxEmojiLength = 3, maxPhraseLength = 5)) {
+            val response = jsonClient().post("/api/v1/phrases") {
+                jsonBody("""{"emoji":"1234","phrase":"123456"}""")
+            }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            val error: ErrorResponse = response.body()
+            assertContains(error.message, "at most 3")
+            assertContains(error.message, "at most 5")
+        }
+
+    @Test
     fun `malformed json returns 400`() = appTest {
         val response = jsonClient().post("/api/v1/phrases") {
             jsonBody("""{"emoji":""")
@@ -236,7 +319,7 @@ class ApiTest {
     @Test
     fun `unexpected failures return a generic 500 without leaking details`() {
         val broken = object : Repository by InMemoryRepository() {
-            override suspend fun phrases(): List<EmojiPhrase> =
+            override suspend fun count(): Int =
                 throw IllegalStateException("database password=hunter2")
         }
 

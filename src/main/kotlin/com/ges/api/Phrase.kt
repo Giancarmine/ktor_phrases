@@ -1,6 +1,7 @@
 package com.ges.api
 
 import com.ges.API_VERSION
+import com.ges.config.AppConfig
 import com.ges.model.PhraseNotFoundException
 import com.ges.model.PhraseRequest
 import com.ges.model.ValidationException
@@ -20,14 +21,31 @@ import io.ktor.server.routing.route
 
 const val PHRASES_ENDPOINT = "$API_VERSION/phrases"
 
-fun Route.phraseRoutes(repository: Repository) {
+fun Route.phraseRoutes(repository: Repository, config: AppConfig) {
     route(PHRASES_ENDPOINT) {
         get {
-            call.respond(repository.phrases())
+            val offset = call.parameters.queryInt("offset", default = 0, min = 0)
+            val limit = call.parameters.queryInt(
+                "limit",
+                default = config.pageSize,
+                min = 1,
+                max = config.maxPageSize,
+            )
+            val total = repository.count()
+            val phrases = repository.phrases(offset, limit)
+
+            call.response.header("X-Total-Count", total.toString())
+            call.response.header("X-Offset", offset.toString())
+            call.response.header("X-Limit", limit.toString())
+            paginationLinks(offset, limit, total, phrases.size)?.let { links ->
+                call.response.header(HttpHeaders.Link, links)
+            }
+
+            call.respond(phrases)
         }
 
         post {
-            val request = call.receive<PhraseRequest>().validated()
+            val request = call.receive<PhraseRequest>().validated(config)
             val result = repository.add(request.emoji, request.phrase)
 
             if (result.created) {
@@ -52,18 +70,18 @@ fun Route.phraseRoutes(repository: Repository) {
     }
 }
 
-private fun PhraseRequest.validated(): PhraseRequest {
+private fun PhraseRequest.validated(config: AppConfig): PhraseRequest {
     val normalized = copy(emoji = emoji.trim(), phrase = phrase.trim())
     val errors = buildList {
         if (normalized.emoji.isBlank()) {
             add("emoji must not be blank")
-        } else if (normalized.emoji.length > MAX_EMOJI_LENGTH) {
-            add("emoji must be at most $MAX_EMOJI_LENGTH characters")
+        } else if (normalized.emoji.length > config.maxEmojiLength) {
+            add("emoji must be at most ${config.maxEmojiLength} characters")
         }
         if (normalized.phrase.isBlank()) {
             add("phrase must not be blank")
-        } else if (normalized.phrase.length > MAX_PHRASE_LENGTH) {
-            add("phrase must be at most $MAX_PHRASE_LENGTH characters")
+        } else if (normalized.phrase.length > config.maxPhraseLength) {
+            add("phrase must be at most ${config.maxPhraseLength} characters")
         }
     }
     if (errors.isNotEmpty()) throw ValidationException(errors.joinToString("; "))
@@ -74,5 +92,25 @@ private fun Parameters.requireId(): Int =
     this["id"]?.toIntOrNull()?.takeIf { it > 0 }
         ?: throw ValidationException("id must be a positive integer")
 
-private const val MAX_EMOJI_LENGTH = 32
-private const val MAX_PHRASE_LENGTH = 280
+private fun Parameters.queryInt(name: String, default: Int, min: Int, max: Int? = null): Int {
+    val raw = this[name] ?: return default
+    val value = raw.toIntOrNull() ?: throw ValidationException("$name must be an integer")
+    if (value < min) throw ValidationException("$name must be greater than or equal to $min")
+    if (max != null && value > max) {
+        throw ValidationException("$name must be less than or equal to $max")
+    }
+    return value
+}
+
+private fun paginationLinks(offset: Int, limit: Int, total: Int, returned: Int): String? {
+    val links = buildList {
+        val next = offset + returned
+        if (next < total) {
+            add("<$PHRASES_ENDPOINT?limit=$limit&offset=$next>; rel=\"next\"")
+        }
+        if (offset > 0) {
+            add("<$PHRASES_ENDPOINT?limit=$limit&offset=${maxOf(0, offset - limit)}>; rel=\"prev\"")
+        }
+    }
+    return links.takeIf { it.isNotEmpty() }?.joinToString(", ")
+}
