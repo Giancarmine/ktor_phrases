@@ -1,5 +1,6 @@
 package com.ges
 
+import com.ges.config.AppConfig
 import com.ges.repository.InMemoryRepository
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -75,6 +76,38 @@ class WebappTest {
             assertContains(body, "#1")
         }
     }
+
+    @Test
+    fun `html view paginates with previous and next links`() {
+        val repository = InMemoryRepository()
+        appTest(repository, AppConfig(pageSize = 2, maxPageSize = 5)) {
+            repeat(3) { index -> repository.add("e$index", "phrase-$index") }
+
+            val firstPage = client.get("/phrases").bodyAsText()
+
+            assertContains(firstPage, "Showing 2 of 3 (offset 0, limit 2)")
+            assertContains(firstPage, "phrase-0")
+            assertContains(firstPage, "phrase-1")
+            assertFalse(firstPage.contains("phrase-2"))
+            assertContains(firstPage, "offset=2")
+            assertFalse(firstPage.contains("Previous"))
+
+            val secondPage = client.get("/phrases?offset=2").bodyAsText()
+
+            assertContains(secondPage, "Showing 1 of 3 (offset 2, limit 2)")
+            assertContains(secondPage, "phrase-2")
+            assertContains(secondPage, "offset=0")
+            assertFalse(secondPage.contains("Next"))
+        }
+    }
+
+    @Test
+    fun `html view rejects invalid pagination`() =
+        appTest(config = AppConfig(pageSize = 2, maxPageSize = 2)) {
+            val response = client.get("/phrases?limit=3")
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
 
     @Test
     fun `html view escapes emoji and phrase values`() {

@@ -52,8 +52,49 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          load: ${{ github.event_name == 'pull_request' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test image
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            image="$IMAGE_NAME:$IMAGE_VERSION"
+          else
+            image="$(printf '%s\n' "$IMAGE_TAGS" | head -n1)"
+            docker pull "$image"
+          fi
+
+          docker run --detach --rm --name ktor-phrases-smoke \
+            --publish 18080:8080 \
+            --env STORAGE=sqlite \
+            --env DATABASE_PATH=/app/data/phrases.db \
+            "$image"
+
+          cleanup() { docker rm --force ktor-phrases-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://localhost:18080/health >/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          curl --fail --silent http://localhost:18080/health
+          curl --fail --silent http://localhost:18080/ready
+          curl --fail --silent --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{"emoji":"☕","phrase":"Smoke test"}' \
+            http://localhost:18080/api/v1/phrases
+          curl --fail --silent http://localhost:18080/api/v1/phrases | grep -q 'Smoke test'

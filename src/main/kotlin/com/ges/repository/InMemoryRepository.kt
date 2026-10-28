@@ -23,8 +23,11 @@ class InMemoryRepository : Repository {
 
     override suspend fun phrase(id: Int): EmojiPhrase? = mutex.withLock { phrases[id] }
 
-    override suspend fun phrases(offset: Int, limit: Int): List<EmojiPhrase> = mutex.withLock {
-        phrases.values.asSequence().drop(offset).take(limit).toList()
+    override suspend fun page(offset: Int, limit: Int): Page = mutex.withLock {
+        Page(
+            items = phrases.values.asSequence().drop(offset).take(limit).toList(),
+            total = phrases.size,
+        )
     }
 
     override suspend fun count(): Int = mutex.withLock { phrases.size }

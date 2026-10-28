@@ -4,6 +4,7 @@ import com.ges.config.AppConfig
 import com.ges.model.EmojiPhrase
 import com.ges.model.ErrorResponse
 import com.ges.repository.InMemoryRepository
+import com.ges.repository.Page
 import com.ges.repository.Repository
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -319,7 +320,7 @@ class ApiTest {
     @Test
     fun `unexpected failures return a generic 500 without leaking details`() {
         val broken = object : Repository by InMemoryRepository() {
-            override suspend fun count(): Int =
+            override suspend fun page(offset: Int, limit: Int): Page =
                 throw IllegalStateException("database password=hunter2")
         }
 

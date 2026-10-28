@@ -2,6 +2,7 @@ package com.ges.api
 
 import com.ges.API_VERSION
 import com.ges.config.AppConfig
+import com.ges.http.queryInt
 import com.ges.model.PhraseNotFoundException
 import com.ges.model.PhraseRequest
 import com.ges.model.ValidationException
@@ -31,17 +32,17 @@ fun Route.phraseRoutes(repository: Repository, config: AppConfig) {
                 min = 1,
                 max = config.maxPageSize,
             )
-            val total = repository.count()
-            val phrases = repository.phrases(offset, limit)
+            val page = repository.page(offset, limit)
+            val total = page.total
 
             call.response.header("X-Total-Count", total.toString())
             call.response.header("X-Offset", offset.toString())
             call.response.header("X-Limit", limit.toString())
-            paginationLinks(offset, limit, total, phrases.size)?.let { links ->
+            paginationLinks(offset, limit, total, page.items.size)?.let { links ->
                 call.response.header(HttpHeaders.Link, links)
             }
 
-            call.respond(phrases)
+            call.respond(page.items)
         }
 
         post {
@@ -91,16 +92,6 @@ private fun PhraseRequest.validated(config: AppConfig): PhraseRequest {
 private fun Parameters.requireId(): Int =
     this["id"]?.toIntOrNull()?.takeIf { it > 0 }
         ?: throw ValidationException("id must be a positive integer")
-
-private fun Parameters.queryInt(name: String, default: Int, min: Int, max: Int? = null): Int {
-    val raw = this[name] ?: return default
-    val value = raw.toIntOrNull() ?: throw ValidationException("$name must be an integer")
-    if (value < min) throw ValidationException("$name must be greater than or equal to $min")
-    if (max != null && value > max) {
-        throw ValidationException("$name must be less than or equal to $max")
-    }
-    return value
-}
 
 private fun paginationLinks(offset: Int, limit: Int, total: Int, returned: Int): String? {
     val links = buildList {

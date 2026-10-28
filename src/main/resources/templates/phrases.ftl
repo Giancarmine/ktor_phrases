@@ -10,6 +10,7 @@
 <#if phrases?size == 0>
     <p>No phrases yet. POST one to <code>/api/v1/phrases</code>.</p>
 <#else>
+    <p>Showing ${phrases?size?c} of ${total?c} (offset ${offset?c}, limit ${limit?c}).</p>
     <ul>
         <#list phrases as phrase>
             <li>
@@ -19,6 +20,14 @@
             </li>
         </#list>
     </ul>
+    <nav>
+        <#if hasPrev>
+            <a href="/phrases?limit=${limit?c}&amp;offset=${prevOffset?c}">Previous</a>
+        </#if>
+        <#if hasNext>
+            <a href="/phrases?limit=${limit?c}&amp;offset=${nextOffset?c}">Next</a>
+        </#if>
+    </nav>
 </#if>
 </body>
 </html>

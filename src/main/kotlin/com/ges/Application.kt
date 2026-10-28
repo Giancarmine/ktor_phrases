@@ -110,7 +110,7 @@ fun Application.configure(
         home()
         about()
         health(repository)
-        phrases(repository)
+        phrases(repository, config)
         phraseRoutes(repository, config)
         swaggerUI("/docs", "openapi.yaml")
     }

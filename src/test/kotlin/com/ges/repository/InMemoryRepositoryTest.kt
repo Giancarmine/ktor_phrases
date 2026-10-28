@@ -52,6 +52,28 @@ class InMemoryRepositoryTest {
     }
 
     @Test
+    fun `page returns items and total from one snapshot`() = runTest {
+        val repository = InMemoryRepository()
+        repeat(5) { index -> repository.add("e$index", "p$index") }
+
+        val page = repository.page(offset = 1, limit = 2)
+
+        assertEquals(5, page.total)
+        assertEquals(listOf(2, 3), page.items.map { it.id })
+    }
+
+    @Test
+    fun `page past the end still returns the total`() = runTest {
+        val repository = InMemoryRepository()
+        repeat(2) { index -> repository.add("e$index", "p$index") }
+
+        val page = repository.page(offset = 10, limit = 2)
+
+        assertEquals(2, page.total)
+        assertTrue(page.items.isEmpty())
+    }
+
+    @Test
     fun `phrase returns null for an unknown id`() = runTest {
         val repository = InMemoryRepository()
 

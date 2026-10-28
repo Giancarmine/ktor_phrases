@@ -33,14 +33,17 @@ and a Docker image.
 
 - REST API for creating, listing, fetching, and deleting emoji/phrase pairs.
 - Pagination with `limit`/`offset`, total counts, and RFC 5988 `Link` headers.
+- Snapshot-consistent pages: item count and items come from one lock/transaction.
 - JSON error envelope with stable error codes.
-- Optional durable SQLite storage; in-memory remains the default.
+- Optional durable SQLite storage; in-memory remains the default. SQLite work runs on
+  `Dispatchers.IO` with WAL and a busy timeout.
 - Swagger UI at `/docs` and the raw spec at `/docs/openapi.yaml`.
-- Liveness (`/health`) and storage-aware readiness (`/ready`) probes.
-- Server-rendered HTML view with HTML-escaped values.
+- Liveness (`/health`) and storage-aware readiness (`/ready`) probes with a 2-second timeout.
+- Server-rendered HTML view with HTML-escaped values and previous/next pagination.
 - Environment-driven configuration with startup validation.
 - Multi-stage Dockerfile that runs the tests during the image build.
 - Docker images published to GHCR from CI on `main` and version tags.
+- CI smoke-tests the built container against `/health`, `/ready`, and the phrases API.
 
 ## Status and breaking changes
 
@@ -68,7 +71,7 @@ Application.module()
     ├── AppConfig.from(...) ............ validates all settings
     ├── createRepository(config)
     │     ├── InMemoryRepository ....... Mutex + LinkedHashMap
-    │     └── SqliteRepository ......... guarded JDBC connection
+    │     └── SqliteRepository ......... Dispatchers.IO + locked JDBC connection
     ▼
 Application.configure(repository, config)
     ├── DefaultHeaders
@@ -78,7 +81,7 @@ Application.configure(repository, config)
     └── routing
          ├── GET  /                     plain-text endpoint index
          ├── GET  /about                project info
-         ├── GET  /phrases              HTML list (FreeMarker)
+         ├── GET  /phrases              HTML list (FreeMarker, paginated)
          ├── GET  /health               liveness probe
          ├── GET  /ready                readiness probe (repository check)
          ├── GET  /docs                 Swagger UI
@@ -90,9 +93,11 @@ Application.configure(repository, config)
 ```
 
 `Application.module()` is the production entry point. It builds the configured repository and
-delegates to `Application.configure(repository, config)`, which tests call directly to inject
-an in-memory repository or custom settings. Repository calls are guarded so both backends are
-safe under concurrent requests.
+delegates to `Application.configure(repository, config)`. Fast route tests call `configure`
+directly with an injected repository; `ApplicationModuleTest` exercises `module()` itself to
+cover environment overrides and real SQLite wiring. Repository calls are guarded so both
+backends are safe under concurrent requests, and the SQLite backend moves blocking JDBC work
+to `Dispatchers.IO`.
 
 ## Project layout
 
@@ -101,6 +106,7 @@ src/main/kotlin/com/ges/
 ├── Application.kt                 entry point, plugins, module wiring
 ├── api/Phrase.kt                  /api/v1/phrases routes, pagination, validation
 ├── config/AppConfig.kt            typed settings and startup validation
+├── http/QueryParameters.kt        shared bounded-integer query parsing
 ├── model/
 │   ├── EmojiPhrase.kt             stored entity (id, emoji, phrase)
 │   ├── HealthResponse.kt          probe response
@@ -122,7 +128,8 @@ src/main/resources/
 └── templates/phrases.ftl          HTML view
 src/test/kotlin/com/ges/
 ├── ApiTest.kt                     JSON API and pagination tests
-├── WebappTest.kt                  HTML, home, and Swagger tests
+├── ApplicationModuleTest.kt       module() wiring and SQLite restart tests
+├── WebappTest.kt                  HTML pagination, home, and Swagger tests
 ├── HealthTest.kt                  liveness/readiness tests
 ├── RepositoryFactoryTest.kt       storage selection tests
 ├── TestSupport.kt                 shared testApplication helpers
@@ -140,7 +147,7 @@ Dockerfile                         multi-stage build and runtime image
 |---|---|---|---|
 | `GET` | `/` | `200` | Plain-text list of endpoints |
 | `GET` | `/about` | `200` | Project and source link |
-| `GET` | `/phrases` | `200` | HTML page rendered with FreeMarker |
+| `GET` | `/phrases` | `200` | Paginated HTML page rendered with FreeMarker |
 | `GET` | `/health` | `200` | Liveness probe |
 | `GET` | `/ready` | `200` / `503` | Readiness probe; checks the configured repository |
 | `GET` | `/docs` | `200` | Swagger UI |
@@ -193,6 +200,11 @@ Link: </api/v1/phrases?limit=2&offset=6>; rel="next", </api/v1/phrases?limit=2&o
 `Link` is only present when a next and/or previous page exists. Invalid pagination parameters
 return `400` with `validation_error`.
 
+The total and the items are read in one repository snapshot (a single transaction for SQLite),
+so `X-Total-Count` cannot disagree with the returned page because of a concurrent write. The
+HTML view at `GET /phrases` accepts the same `limit` and `offset` parameters, shows
+`Showing X of Y`, and renders previous/next links.
+
 ### Health checks
 
 | Endpoint | Meaning | Responses |
@@ -201,8 +213,9 @@ return `400` with `validation_error`.
 | `GET /ready` | Readiness: the configured storage answers a query | `200 {"status":"ready"}` or `503 {"status":"unavailable"}` |
 
 `/ready` catches storage failures, logs the cause, and does not expose error details in the
-response. The in-memory backend is ready as long as the process is alive; SQLite is checked
-with a real query.
+response. The check has a 2-second timeout, so a wedged database returns `503` instead of
+holding the probe open. The in-memory backend is ready as long as the process is alive; SQLite
+is checked with a real query.
 
 ### Examples
 
@@ -224,8 +237,9 @@ curl http://localhost:8080/api/v1/phrases/1
 # Delete
 curl -i -X DELETE http://localhost:8080/api/v1/phrases/1
 
-# HTML view
+# HTML view (supports limit/offset)
 curl http://localhost:8080/phrases
+curl 'http://localhost:8080/phrases?limit=2&offset=2'
 
 # OpenAPI / Swagger UI
 curl http://localhost:8080/docs/openapi.yaml
@@ -297,8 +311,12 @@ The same variables work with the fat JAR and the Docker image.
 - `STORAGE=sqlite` stores data in the file at `DATABASE_PATH`. The schema is created on startup,
   and an identical emoji/phrase pair is stored only once.
 - `DATABASE_PATH=:memory:` gives a private, ephemeral SQLite database (useful for tests).
-- The SQLite implementation uses one mutex-guarded JDBC connection. That is deliberate for a
-  demo; use a connection pool and migrations if you need production throughput.
+- SQLite JDBC calls run on `Dispatchers.IO` and are serialized by a lock, so request threads are
+  never blocked. File databases use WAL, `synchronous=NORMAL`, and `busy_timeout=5000`; the
+  connection is closed idempotently on shutdown.
+- Listing uses one transaction for the count and the page, which keeps pagination consistent.
+- One connection is deliberate for a demo; add a pool and schema migrations if you need
+  production throughput.
 
 ## Run locally
 
@@ -332,6 +350,10 @@ CI publishes the image to GitHub Container Registry from
 - `sha-<commit>` for every published build
 - pull requests build the image without pushing it
 
+On pull requests the Docker workflow loads the built image and runs it with SQLite storage on
+port `18080`, then checks `/health`, `/ready`, a `POST`, and the list response. A push must pass
+the same smoke test before the image is considered good.
+
 Published images are private by default. Change the package visibility in the repository's
 package settings if you want anonymous pulls.
 
@@ -363,24 +385,28 @@ parent directory are writable by the unprivileged `app` user (uid `10001`).
 ./gradlew test
 ```
 
-The suite has 54 tests covering creation, duplicate handling, pagination, fetching, deletion,
-validation, malformed JSON, HTML escaping, Swagger/OpenAPI, health probes, configuration parsing,
-repository selection, and both repository implementations (including SQLite persistence across
-reconnects). JaCoCo reports are written to `build/reports/jacoco/test/html`; `./gradlew build`
-enforces an 80% line-coverage minimum (currently about 96% lines / 89% branches). CI runs
-`./gradlew build` on every push and pull request; the Docker workflow builds the image on pull
-requests and publishes it from `main` and version tags.
+The suite has 62 tests covering creation, duplicate handling, API and HTML pagination,
+snapshot consistency, fetching, deletion, validation, malformed JSON, HTML escaping,
+Swagger/OpenAPI, health probes, configuration parsing, repository selection, module-level
+environment wiring, and both repository implementations (including SQLite persistence across
+restarts). JaCoCo reports are written to `build/reports/jacoco/test/html`; `./gradlew build`
+enforces an 80% line-coverage minimum (currently about 95% lines / 89% branches). CI runs
+`./gradlew build` on every push and pull request. The Docker workflow builds and smoke-tests
+the image on pull requests and publishes it from `main` and version tags.
 
 ## Design notes and next steps
 
-- The repository interface is small (`add`, `phrase`, paginated `phrases`, `count`, `remove`,
-  `clear`), so storage can be swapped without touching the routes.
+- The repository interface is small (`add`, `phrase`, paginated `page` plus a `phrases`
+  convenience method, `count`, `remove`, `clear`), so storage can be swapped without touching
+  the routes. `page` returns items and total from one snapshot; `count` remains available for
+  readiness checks.
 - Pagination was kept header-based to preserve the existing array response shape. A future v2
   could return an envelope (`items`, `total`, `limit`, `offset`) if a breaking change is
   acceptable.
 - Natural next steps: authentication/API keys, rate limiting, a connection pool plus schema
-  migrations for heavier SQLite use, generated (rather than hand-written) OpenAPI, image
-  signing/SBOMs, and wiring the probes into a deployment manifest.
+  migrations for heavier SQLite use, keyset pagination for large collections, generated (rather
+  than hand-written) OpenAPI, image signing/SBOMs, and wiring the probes into a deployment
+  manifest.
 - There is no authentication or rate limiting. Run it as a demo, not as a production service.
 
 ## Credits
